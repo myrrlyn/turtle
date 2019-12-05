@@ -153,7 +153,8 @@
 //! [`hsl(hue, saturation, lightness)`]: ./struct.Color.html#method.hsl
 //! [`hsla(hue, saturation, lightness, alpha)`]: ./struct.Color.html#method.hsla
 
-use std::fmt::Debug;
+use std::error::Error;
+use std::fmt::{self, Debug, Display, Formatter};
 use std::iter::repeat;
 use std::f64::EPSILON;
 use std::str::FromStr;
@@ -1172,22 +1173,29 @@ impl From<[f64; 4]> for Color {
 impl<'a> From<&'a str> for Color {
     fn from(s: &'a str) -> Self {
         let s = s.trim();
-        match s.parse() {
-            Ok(c) => c,
-            Err(ParseError::InvalidLiteral) => panic!("Invalid color literal: {}", s),
-            Err(ParseError::UnknownName) => panic!("Unknown color name: {}", s),
-        }
+        s.parse().unwrap_or_else(|e| panic!("{}", e))
     }
 }
 
 /// Possible errors discovered when parsing text as a `Color` symbol
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub enum ParseError {
     /// The text was not a valid numeric literal.
-    InvalidLiteral,
+    InvalidLiteral(String),
     /// The text was not a known named color.
-    UnknownName,
+    UnknownName(String),
 }
+
+impl Display for ParseError {
+    fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
+        match self {
+            ParseError::InvalidLiteral(s) => write!(fmt, "Invalid color literal: {}", s),
+            ParseError::UnknownName(s) => write!(fmt, "Unknown color name: {}", s),
+        }
+    }
+}
+
+impl Error for ParseError {}
 
 impl FromStr for Color {
     type Err = ParseError;
@@ -1201,15 +1209,15 @@ impl FromStr for Color {
             let color_str = match color_str.len() {
                 3 => color_str.chars().flat_map(|c| repeat(c).take(2)).collect(),
                 6 => color_str.to_owned(),
-                _ => return Err(ParseError::InvalidLiteral),
+                _ => return Err(ParseError::InvalidLiteral(s.to_owned())),
             };
 
             // Use closure here as 's' cannot be captured when using nested fn form
-            fn extract_color_value(v: &str) -> Result<f64, ParseError> {
+            let extract_color_value = |v: &str| -> Result<f64, ParseError> {
                 i64::from_str_radix(v, 16)
                     .map(|i| i as f64)
-                    .map_err(|_| ParseError::InvalidLiteral)
-            }
+                    .map_err(|_| ParseError::InvalidLiteral(s.to_owned()))
+            };
 
             let red = extract_color_value(&color_str[0..2])?;
             let green = extract_color_value(&color_str[2..4])?;
@@ -1219,7 +1227,7 @@ impl FromStr for Color {
         } else {
             from_color_name(s)
                 .or_else(|| extended::from_color_name(s))
-                .ok_or(ParseError::UnknownName)
+                .ok_or_else(|| ParseError::UnknownName(s.to_owned()))
         }
     }
 }
