@@ -156,6 +156,7 @@
 use std::fmt::Debug;
 use std::iter::repeat;
 use std::f64::EPSILON;
+use std::str::FromStr;
 
 use serde::{Serialize, Deserialize};
 #[cfg(not(target_arch = "wasm32"))]
@@ -1170,6 +1171,29 @@ impl From<[f64; 4]> for Color {
 
 impl<'a> From<&'a str> for Color {
     fn from(s: &'a str) -> Self {
+        let s = s.trim();
+        match s.parse() {
+            Ok(c) => c,
+            Err(ParseError::InvalidLiteral) => panic!("Invalid color literal: {}", s),
+            Err(ParseError::UnknownName) => panic!("Unknown color name: {}", s),
+        }
+    }
+}
+
+/// Possible errors discovered when parsing text as a `Color` symbol
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+pub enum ParseError {
+    /// The text was not a valid numeric literal.
+    InvalidLiteral,
+    /// The text was not a known named color.
+    UnknownName,
+}
+
+impl FromStr for Color {
+    type Err = ParseError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let s = text.trim();
         if s.starts_with('#') {
             let color_str = &s[1..];
             // Color strings can either be of size 3 (rgb) or 6 (rrggbb)
@@ -1177,22 +1201,25 @@ impl<'a> From<&'a str> for Color {
             let color_str = match color_str.len() {
                 3 => color_str.chars().flat_map(|c| repeat(c).take(2)).collect(),
                 6 => color_str.to_owned(),
-                _ => panic!("Invalid color literal: {}", s),
+                _ => return Err(ParseError::InvalidLiteral),
             };
 
             // Use closure here as 's' cannot be captured when using nested fn form
-            let extract_color_value = |v| i64::from_str_radix(v, 16)
-                .unwrap_or_else(|_| panic!("Invalid color literal: {}", s)) as f64;
+            fn extract_color_value(v: &str) -> Result<f64, ParseError> {
+                i64::from_str_radix(v, 16)
+                    .map(|i| i as f64)
+                    .map_err(|_| ParseError::InvalidLiteral)
+            }
 
-            let red = extract_color_value(&color_str[0..2]);
-            let green = extract_color_value(&color_str[2..4]);
-            let blue = extract_color_value(&color_str[4..6]);
+            let red = extract_color_value(&color_str[0..2])?;
+            let green = extract_color_value(&color_str[2..4])?;
+            let blue = extract_color_value(&color_str[4..6])?;
 
-            Self::rgb(red, green, blue)
+            Ok(Self::rgb(red, green, blue))
         } else {
             from_color_name(s)
                 .or_else(|| extended::from_color_name(s))
-                .unwrap_or_else(|| panic!("Unknown color name: {}", s))
+                .ok_or(ParseError::UnknownName)
         }
     }
 }
